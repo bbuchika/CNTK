@@ -6,7 +6,7 @@
 
 from __future__ import division
 import numpy as np
-from ..learner import *
+from ..learners import *
 from .. import parameter, input_variable
 
 import pytest
@@ -131,7 +131,7 @@ def test_training_parameter_schedule():
 def test_sweep_based_schedule(tmpdir, device_id):
     from cntk.io import MinibatchSource, CTFDeserializer, StreamDef, StreamDefs
     from .. import cross_entropy_with_softmax, classification_error, plus, reduce_sum
-    from ..trainer import Trainer
+    from ..train.trainer import Trainer
 
     input_dim = 69
 
@@ -164,7 +164,7 @@ def test_sweep_based_schedule(tmpdir, device_id):
 
     lr_per_sample = learning_rate_schedule([0.3, 0.2, 0.1, 0.0], UnitType.sample)
     learner = sgd(z.parameters, lr_per_sample)
-    trainer = Trainer(z, ce, errs, [learner])
+    trainer = Trainer(z, (ce, errs), [learner])
 
     input_map = {
         in1       : mbs.streams.features,
@@ -188,5 +188,5 @@ def test_sweep_based_schedule(tmpdir, device_id):
 
     # fetch minibatch (multiple sweeps)
     data = mbs.next_minibatch(30, input_map=input_map)
-    trainer.train_minibatch(data, [z.output])
+    trainer.train_minibatch(data, outputs=[z.output])
     assert learner.learning_rate() == 0.0
