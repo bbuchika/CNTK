@@ -9,7 +9,7 @@ module_path = os.path.join(py_path, 'ReasoNet')
 import cntk.device as device
 import numpy as np
 from cntk.ops.tests.ops_test_utils import cntk_device
-from cntk.ops import input, past_value, future_value
+from cntk.ops import input
 from cntk.io import MinibatchSource
 from cntk import Trainer, Axis, device, combine
 from cntk.layers import Recurrence, Convolution
@@ -27,7 +27,7 @@ def test_reasonet(device_id, is_1bit_sgd):
     pytest.skip('test doesn\'t support 1bit sgd')
 
   import ReasoNet.reasonet as rsn
-  device.set_default_device(cntk_device(device_id))
+  device.try_set_default_device(cntk_device(device_id))
   data_path = os.path.join(module_path, "Data/fast_test.txt")
   eval_path = os.path.join(module_path, "Data/fast_test.txt")
   vocab_dim = 101100
