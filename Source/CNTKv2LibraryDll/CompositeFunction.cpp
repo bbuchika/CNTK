@@ -581,10 +581,28 @@ namespace CNTK
             }
             case PrimitiveOpType::Slice:
             {
-                auto axis = functionConfig[PrimitiveFunction::AttributeNameAxis].Value<Axis>();
-                auto beginIndex = functionConfig[PrimitiveFunction::AttributeNameBeginIndex].Value<int>();
-                auto endIndex = functionConfig[PrimitiveFunction::AttributeNameEndIndex].Value<int>();
-
+                std::vector<Axis> axis;
+                std::vector<int> beginIndex, endIndex;
+                if (functionConfig.Contains(PrimitiveFunction::AttributeNameAxisVec) &&
+                    functionConfig.Contains(PrimitiveFunction::AttributeNameBeginIndexVec) &&
+                    functionConfig.Contains(PrimitiveFunction::AttributeNameEndIndexVec))
+                {
+                    axis = AsVector<Axis>(functionConfig[PrimitiveFunction::AttributeNameAxisVec].Value<std::vector<DictionaryValue>>()); 
+                    beginIndex = AsVector<int>(functionConfig[PrimitiveFunction::AttributeNameBeginIndexVec].Value<std::vector<DictionaryValue>>());
+                    endIndex = AsVector<int>(functionConfig[PrimitiveFunction::AttributeNameEndIndexVec].Value<std::vector<DictionaryValue>>());
+                }
+                else if (functionConfig.Contains(PrimitiveFunction::AttributeNameAxis) &&
+                    functionConfig.Contains(PrimitiveFunction::AttributeNameBeginIndex) &&
+                    functionConfig.Contains(PrimitiveFunction::AttributeNameEndIndex))
+                {
+                    axis.push_back(functionConfig[PrimitiveFunction::AttributeNameAxis].Value<Axis>());
+                    beginIndex.push_back(functionConfig[PrimitiveFunction::AttributeNameBeginIndex].Value<int>());
+                    endIndex.push_back(functionConfig[PrimitiveFunction::AttributeNameEndIndex].Value<int>());
+                }
+                else
+                {
+                    RuntimeError("Failed to create computation node: Slice operation with inconsistent attributes");
+                }
                 // Internal CNTK SliceNode takes 1 based axis indices instead of 0 based
                 computationNodePtr = New<SliceNode<ElementType>>(network->GetDeviceId(), internalNodeName, beginIndex, endIndex, AsCNTKInternalAxisIdx(axis));
                 break;
@@ -630,11 +648,16 @@ namespace CNTK
                 auto upperPad = functionConfig[PrimitiveFunction::AttributeNameUpperPad].Value<NDShape>();
                 auto autoPadding = AsVector<bool>(functionConfig[PrimitiveFunction::AttributeNameAutoPadding].Value<std::vector<DictionaryValue>>());
                 auto ceilOutDim = false;
+                auto includePad = false;
                 if (functionConfig.Contains(PrimitiveFunction::AttributeNameCeilOutDim))
                 {
                     ceilOutDim = functionConfig[PrimitiveFunction::AttributeNameCeilOutDim].Value<bool>();
                 }
-                computationNodePtr = New<PoolingNode<ElementType>>(network->GetDeviceId(), internalNodeName, AsCNTKPoolKind(poolingType), AsTensorShape(poolingWindowsShape), AsTensorShape(strides), autoPadding, AsTensorShape(lowerPad), AsTensorShape(upperPad), ceilOutDim, ImageLayoutKind::CHW);
+                if (functionConfig.Contains(PrimitiveFunction::AttributeNameIncludePad))
+                {
+                    includePad = functionConfig[PrimitiveFunction::AttributeNameIncludePad].Value<bool>();
+                }
+                computationNodePtr = New<PoolingNode<ElementType>>(network->GetDeviceId(), internalNodeName, AsCNTKPoolKind(poolingType), AsTensorShape(poolingWindowsShape), AsTensorShape(strides), autoPadding, AsTensorShape(lowerPad), AsTensorShape(upperPad), ceilOutDim, includePad, ImageLayoutKind::CHW);
                 break;
             }
             case PrimitiveOpType::Unpooling:
@@ -651,6 +674,14 @@ namespace CNTK
             case PrimitiveOpType::SumAll:
                 computationNodePtr = New<SumElementsNode<ElementType>>(network->GetDeviceId(), internalNodeName);
                 break;
+            case PrimitiveOpType::OneHot:
+            {
+                auto numClass = functionConfig[PrimitiveFunction::AttributeNameNumClass].Value<size_t>();
+                auto is_sparse = functionConfig[PrimitiveFunction::AttributeNameOneHotOutputSparse].Value<bool>();
+                auto axis = functionConfig[PrimitiveFunction::AttributeNameOneHotAxis].Value<Axis>();
+                computationNodePtr = New<OneHotNode<ElementType>>(network->GetDeviceId(), numClass, is_sparse, axis.StaticAxisIndex(), internalNodeName);
+                break;
+            }
             case PrimitiveOpType::Plus:
                 computationNodePtr = New<PlusNode<ElementType>>(network->GetDeviceId(), internalNodeName);
                 break;
@@ -696,15 +727,15 @@ namespace CNTK
             }
             case PrimitiveOpType::Convolution:
             {
-                NDShape outputMapCount, kernelShape;
-                std::tie(outputMapCount, kernelShape) = GetConvolutionOutputMapCountAndKernelShape(functionInputs[0].Shape(), functionInputs[1].Shape());
                 auto strides = functionConfig[PrimitiveFunction::AttributeNameStrides].Value<NDShape>();
                 auto lowerPad = functionConfig[PrimitiveFunction::AttributeNameLowerPad].Value<NDShape>();
                 auto upperPad = functionConfig[PrimitiveFunction::AttributeNameUpperPad].Value<NDShape>();
                 auto sharing = AsVector<bool>(functionConfig[PrimitiveFunction::AttributeNameSharing].Value<std::vector<DictionaryValue>>());
                 auto autoPadding = AsVector<bool>(functionConfig[PrimitiveFunction::AttributeNameAutoPadding].Value<std::vector<DictionaryValue>>());
                 auto transpose = functionConfig[PrimitiveFunction::AttributeNameTranspose].Value<bool>();
-                NDShape outputShape = NDShape::Unknown; 
+                NDShape outputMapCount, kernelShape;
+                std::tie(outputMapCount, kernelShape) = GetConvolutionOutputMapCountAndKernelShape(functionInputs[0].Shape(), functionInputs[1].Shape(), transpose);
+                NDShape outputShape = NDShape::Unknown;
                 if (functionConfig.Contains(PrimitiveFunction::AttributeNameOutputShape))
                     outputShape = functionConfig[PrimitiveFunction::AttributeNameOutputShape].Value<NDShape>();
                 auto maxTempMemSizeInSamples = functionConfig[PrimitiveFunction::AttributeNameMaxTempMemSizeInSamples].Value<size_t>();
@@ -1123,6 +1154,7 @@ namespace CNTK
             }
 
             m_computationNetwork->SetTraceLevel(Internal::GetComputationNetworkTraceLevel());
+            m_computationNetwork->SetTrackGapNans(Internal::GetComputationNetworkTrackGapNans());
             m_computationNetwork->CompileNetwork();
 
             // Verify that the shapes of the output Variables that we computed match the corresponding nodes in the ComputationNetwork
@@ -1283,30 +1315,9 @@ namespace CNTK
         }
     }
 
-    static NDShape GetValueShape(const Variable& var, const ComputationNodeBasePtr& computationNodePtr)
-    {
-        size_t outputValueNumAxes = var.Shape().Rank();
-
-        // Add the batch and dynamic axes if needed
-        if (computationNodePtr->GetMBLayout() != nullptr)
-            outputValueNumAxes += 2;
-
-        std::vector<size_t> outputShapeDims(outputValueNumAxes);
-        for (size_t i = 0; i < var.Shape().Rank(); ++i)
-            outputShapeDims[i] = computationNodePtr->GetSampleLayout().GetDim(i);
-
-        if (computationNodePtr->GetMBLayout() != nullptr)
-        {
-            outputShapeDims[var.Shape().Rank()] = computationNodePtr->GetMBLayout()->GetNumTimeSteps();
-            outputShapeDims[var.Shape().Rank() + 1] = computationNodePtr->GetMBLayout()->GetNumSequences();
-        }
-
-        return NDShape(outputShapeDims);
-    }
-
     /*static*/ void CompositeFunction::GetNodeOutputOrGradient(Variable var, ValuePtr& varValue, Microsoft::MSR::CNTK::ComputationNodeBasePtr& computationNode, bool getGradient)
     {
-        auto valueShape = GetValueShape(var, computationNode);
+        auto valueShape = PackedValue::GetUnpackedShape(var.Shape(), var.DynamicAxes(), computationNode->GetMBLayout());
         if (varValue != nullptr)
         {
             // TODO: The shape of the specified output Value object must match the actual output shape
@@ -1323,7 +1334,7 @@ namespace CNTK
         {
             auto& matrix = getGradient ? computationNode->As<ComputationNode<float>>()->Gradient() : computationNode->As<ComputationNode<float>>()->Value();
             if (varValue == nullptr)
-                nodeValue = MakeSharedObject<PackedValue>(var.Shape(), std::make_shared<Matrix<float>>(matrix.AsReference()), layout, /*readOnly =*/ false);
+                nodeValue = MakeSharedObject<PackedValue>(var.Shape(), var.DynamicAxes(), std::make_shared<Matrix<float>>(matrix.AsReference()), layout, /*readOnly =*/ false);
             else
                 nodeValue = Utils::GetValueObjectFromCNTKImplMatrixAndMBLayout<float>(var, matrix, layout);
             break;
@@ -1332,7 +1343,7 @@ namespace CNTK
         {
             auto& matrix = getGradient ? computationNode->As<ComputationNode<double>>()->Gradient() : computationNode->As<ComputationNode<double>>()->Value();
             if (varValue == nullptr)
-                nodeValue = MakeSharedObject<PackedValue>(var.Shape(), std::make_shared<Matrix<double>>(matrix.AsReference()), layout, /*readOnly =*/ false);
+                nodeValue = MakeSharedObject<PackedValue>(var.Shape(), var.DynamicAxes(), std::make_shared<Matrix<double>>(matrix.AsReference()), layout, /*readOnly =*/ false);
             else
                 nodeValue = Utils::GetValueObjectFromCNTKImplMatrixAndMBLayout<double>(var, matrix, layout);
             break;

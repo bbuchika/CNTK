@@ -92,8 +92,6 @@ namespace CNTK
         // Retrieves the shape of the matrix corresponding to the parameter value.
         static NDShape GetMatrixShape(const Parameter& parameter);
 
-        size_t m_minibatchCount;
-
     private:
         // Templatized update function, it invokes preprocess and postprocess using the provided
         // template parameter and also invokes virtual Update method implemented in one of the subclasses.
@@ -200,6 +198,24 @@ namespace CNTK
 
     protected:
         bool m_needAveMultiplier;
+
+        virtual void Update(const Parameter& parameter, const NDArrayViewPtr& gradientValue, const NDArrayViewPtr& smoothedGradientValue, size_t trainingSampleCount) const override;
+
+        template <typename ElementType>
+        void Update(const Parameter& parameter, const NDArrayViewPtr& gradientValue, const NDArrayViewPtr& smoothedGradientValue, size_t trainingSampleCount) const;
+    };
+
+    class LearnerAdaDelta : public LearnerBase
+    {
+    public:
+        LearnerAdaDelta(
+            const std::vector<Parameter>& parameters,
+            double rho, double epsilon,
+            AdditionalLearningOptions additionalOptions);
+
+    protected:
+        double m_rho;
+        double m_epsilon;
 
         virtual void Update(const Parameter& parameter, const NDArrayViewPtr& gradientValue, const NDArrayViewPtr& smoothedGradientValue, size_t trainingSampleCount) const override;
 

@@ -97,6 +97,7 @@ namespace CNTK
         {PrimitiveOpType::StopGradient, L"StopGradient"},
         {PrimitiveOpType::ELU, L"ELU"},
         {PrimitiveOpType::CosDistanceWithNegativeSamples, L"CosDistanceWithNegativeSamples"},
+        {PrimitiveOpType::OneHot, L"OneHotOp" },
     };
 
     inline const std::wstring& PrimitiveOpTypeName(PrimitiveOpType opType)
@@ -197,6 +198,7 @@ namespace CNTK
         static const std::wstring InternalArgminReductionOpName;
 
         static const std::wstring AttributeNameAxis;
+        static const std::wstring AttributeNameAxisVec;
         static const std::wstring AttributeNameAxis1;
         static const std::wstring AttributeNameAxis2;
         static const std::wstring AttributeNameAllowDuplicates;
@@ -214,6 +216,7 @@ namespace CNTK
         static const std::wstring AttributeNameLowerPad;
         static const std::wstring AttributeNameUpperPad;
         static const std::wstring AttributeNameCeilOutDim;
+        static const std::wstring AttributeNameIncludePad;
         static const std::wstring AttributeNameTranspose;
         static const std::wstring AttributeNameOutputShape; 
         static const std::wstring AttributeNameMaxTempMemSizeInSamples;
@@ -229,7 +232,9 @@ namespace CNTK
         static const std::wstring AttributeNameNewSequenceAxisLengthScalingFactor;
         static const std::wstring AttributeNameNewSequenceAxisLengthAdditiveFactor;
         static const std::wstring AttributeNameBeginIndex;
+        static const std::wstring AttributeNameBeginIndexVec;
         static const std::wstring AttributeNameEndIndex;
+        static const std::wstring AttributeNameEndIndexVec;
         static const std::wstring AttributeNameReductionOpName;
         static const std::wstring AttributeNameRngSeed;
         static const std::wstring AttributeNameRngOffset;
@@ -245,6 +250,9 @@ namespace CNTK
         static const std::wstring AttributeNameTokensToIgnore;
         static const std::wstring AttributeNameDelayConstraint;
         static const std::wstring AttributeNameBlankTokenId;
+        static const std::wstring AttributeNameNumClass;
+        static const std::wstring AttributeNameOneHotOutputSparse;
+        static const std::wstring AttributeNameOneHotAxis;
 
     protected:
         PrimitiveFunction(PrimitiveOpType op, const std::vector<Variable>& inputs, Dictionary&& functionConfig, const std::wstring& functionName, const std::wstring& uid)
@@ -673,12 +681,13 @@ namespace CNTK
                 if (op == PrimitiveOpType::Convolution)
                     fromShape = operandShape;
 
-                FixNDShape(filterRank, inputRank, kernelShape, 1, fromShape); // convolve over red dim; pool over 1
-                FixNDShape(filterRank, inputRank, strides, 1, fromShape); // stride for reduction dims is red dim or 1
-                FixNDShape(filterRank, inputRank, lowerPad, 0);
-                FixNDShape(filterRank, inputRank, upperPad, 0);
-                Microsoft::MSR::CNTK::ConvolutionNodeBase<float>::FixVectorShape(filterRank, inputRank, sharing, true);
-                Microsoft::MSR::CNTK::ConvolutionNodeBase<float>::FixVectorShape(filterRank, inputRank, autoPad, false); // no padding for reduction dims
+                size_t fillRank = (!transpose)? filterRank : filterRank - 1; 
+                FixNDShape(fillRank, inputRank, kernelShape, 1, fromShape); // convolve over red dim; pool over 1
+                FixNDShape(fillRank, inputRank, strides, 1, fromShape); // stride for reduction dims is red dim or 1
+                FixNDShape(fillRank, inputRank, lowerPad, 0);
+                FixNDShape(fillRank, inputRank, upperPad, 0);
+                Microsoft::MSR::CNTK::ConvolutionNodeBase<float>::FixVectorShape(fillRank, inputRank, sharing, true);
+                Microsoft::MSR::CNTK::ConvolutionNodeBase<float>::FixVectorShape(fillRank, inputRank, autoPad, false); // no padding for reduction dims
             }
 
             decltype(&Microsoft::MSR::CNTK::ConvolveGeometry::ComputeOutputShape) computeOutputShapeFunc;
@@ -750,6 +759,7 @@ namespace CNTK
         // version 4: added extra parameter (#6) for the running mean sample count in BatchNormalization.
         // Version 6: Add argmax and argmin to ReduceElement.
         // Version 8: Add ELU node.
-        static const size_t s_serializationVersion = 8;
+        // Version 9: Add OneHot node.
+        static const size_t s_serializationVersion = 9;
     };
 }

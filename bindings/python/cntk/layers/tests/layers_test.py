@@ -6,14 +6,15 @@
 
 import numpy as np
 from cntk import *
+from cntk.layers import *
 from cntk.layers.typing import *
 
 # Note: We do not test gradients here, assuming that those are tested elsewhere.
 # Forward outputs are tested to verify that the structure of the layer is as expected.
 
 def test_layers_name(device_id):
-    from cntk import placeholder_variable
-    I = placeholder_variable(name='input')
+    from cntk import placeholder
+    I = placeholder(name='input')
     p = Dense(10, name='dense10')(I)
     assert(I.name == 'input')
     assert(p.root_function.name == 'dense10')
@@ -64,7 +65,7 @@ def test_Function(device_id):
     def f(x):
         return x * x
     assert f.shape == (-2,)
-    #assert f.op_name == 'Square'   # BUGBUG: op_name is 'CompositeFunctionOpName'
+    assert f.root_function.op_name == 'Square'
     assert f.name == 'block_name'
 
     ####################################################
@@ -80,7 +81,7 @@ def test_Function(device_id):
         return x * x
     assert g.shape == (3,2)
     r = g([[[2, 1], [5, 2], [1, 3]]])
-    e = [np.array([[[2, 1], [5, 2], [1, 3]]]) ** 2]
+    e = [np.array([[2, 1], [5, 2], [1, 3]]) ** 2]
     assert_list_of_arrays_equal(r, e, err_msg='@Function test failed')
 
 ####################################
@@ -151,20 +152,20 @@ def test_recurrence_fun(device_id):
     # Test 1: sum-reduction over sequence
     ####################################################
     r = Fold(plus)
-    r.update_signature(1)
+    r.update_signature(Sequence[Tensor[1]])
     data = [np.array([[2], [6], [4], [8], [6]])]   # simple sequence
     out = r(data)
-    exp = [[sum(data[0])]]
+    exp = [sum(data[0])]
     np.testing.assert_array_equal(out, exp, err_msg='Error in recurrence over plus')
 
     ####################################################
     # Test 2: max-pool over sequence
     ####################################################
     r = Fold(element_max)
-    r.update_signature(2)
+    r.update_signature(Sequence[Tensor[2]])
     data = [np.array([[2,1], [6,3], [4,2], [8,1], [6,0]])]   # simple sequence
     out = r(data)
-    exp = [[np.max(data[0], axis=0)]]
+    exp = [np.max(data[0], axis=0)]
     np.testing.assert_array_equal(out, exp, err_msg='Error in recurrence over element_max')
 
 ####################################
@@ -183,11 +184,11 @@ def test_unfold(device_id):
     ####################################################
     # Test 1: simple unfold
     ####################################################
-    UF = UnfoldFrom(double_up, initial_state=1)
+    UF = UnfoldFrom(double_up)
     @Function
     @Signature(Sequence[Tensor[1]])
     def FU(x):
-        return UF(x)
+        return UF(Constant(1), x)
     r = FU(x)
     exp = [[[ 2 ], [ 4 ], [ 8 ]],
            [[ 2 ], [ 4 ], [ 8 ], [ 16 ], [ 32 ]]]
@@ -196,11 +197,11 @@ def test_unfold(device_id):
     ####################################################
     # Test 2: unfold with length increase and terminating condition
     ####################################################
-    UF = UnfoldFrom(double_up, until_predicate=lambda x: greater(x, 63),  initial_state=1, length_increase=1.6)
+    UF = UnfoldFrom(double_up, until_predicate=lambda x: greater(x, 63), length_increase=1.6)
     @Function
     @Signature(Sequence[Tensor[1]])
     def FU(x):
-        return UF(x)
+        return UF(Constant(1), x)
     r = FU(x)
     exp = [[[ 2 ], [ 4 ], [ 8 ], [ 16 ], [ 32 ]],         # tests length_increase
            [[ 2 ], [ 4 ], [ 8 ], [ 16 ], [ 32 ], [ 64 ]]] # tests early cut-off due to until_predicate
@@ -408,7 +409,7 @@ def test_layers_convolution_shape(device_id):
     np.testing.assert_array_equal(model_shape, expected_shape, \
         "Error in convolution with stride > 1 and padding")
 
-def  test_layers_convolution_value(device_id):
+def test_layers_convolution_value(device_id):
 
     # Common parameters
     inC, inH, inW = 1, 3, 3
@@ -499,7 +500,7 @@ def  test_layers_convolution_value(device_id):
 ##########################################################
 # Test convolutional 3D layer for correctness (p=False s = 1)
 ##########################################################
-def  test_layers_convolution_3d(device_id):
+def test_layers_convolution_3d(device_id):
     inC, inH, inW, inD = 1, 3, 3, 3
     y = Input((inC,inH, inW, inD))
     dat = np.ones([1, inC, inH, inW, inD], dtype = np.float32)
@@ -553,12 +554,35 @@ def test_layers_convolution_2d(device_id):
 ####################################
 
 def test_sequential_convolution_without_reduction_dim(device_id):
-    c = Convolution(3, init=np.array([4, 2, 1]), sequential=True, pad=False, reduction_rank=0, bias=False)
-    c.update_signature(()) # input is a sequence of scalars
-    data = [np.array([2, 6, 4, 8, 6])]   # like a short audio sequence, in the dynamic dimension
+    c = Convolution(3, init=np.array([4., 2., 1.]), sequential=True, pad=False, reduction_rank=0, bias=False)
+    c.update_signature(Sequence[Tensor[()]])  # input is a sequence of scalars
+    data = [np.array([2., 6., 4., 8., 6.])]   # like a short audio sequence, in the dynamic dimension
     out = c(data)
-    exp = [[24, 40, 38]]
+    exp = [[24., 40., 38.]]
     np.testing.assert_array_equal(out, exp, err_msg='Error in sequential convolution without reduction dimension')
+
+    c = Convolution(3, init=np.array([4., 2., 1.]), sequential=True, pad=False, reduction_rank=0, bias=False)
+    c.update_signature(Sequence[Tensor[1]]) # input is a sequence of dim-1 vectors
+    data = [np.array([[2.], [6], [4.], [8.], [6.]])]
+    out = c(data)
+    exp = [[[24.], [40.], [38]]] # not reducing; hence, output is also a sequence of dim-1 vectors
+    np.testing.assert_array_equal(out, exp, err_msg='Error in sequential convolution without reduction dimension')
+
+    # these cases failed before
+    emb_dim = 10
+    x = Input(**Sequence[Tensor[20]])
+    m = Embedding(emb_dim)(x)
+    m = Convolution(filter_shape=3, sequential=True)(m)
+
+    # this one still fails
+    # Reshape: Operand (sub-)dimensions '[3]' incompatible with desired replacement (sub-)dimensions '[]'. Number of elements must be the same..
+    m = Embedding(emb_dim)(x)
+    m = reshape(m, (emb_dim,1))
+    m = Convolution(filter_shape=(3,1), num_filters=13, pad=True, sequential=True)(m)
+
+    m = Embedding(emb_dim)(x)
+    m = Convolution(filter_shape=3, pad=True, sequential=True)(m)
+
 
 ####################################
 # 1D convolution without reduction dimension
@@ -566,11 +590,10 @@ def test_sequential_convolution_without_reduction_dim(device_id):
 
 def test_1D_convolution_without_reduction_dim(device_id):
     c = Convolution1D(3, init=np.array([4, 2, 1]), pad=True, reduction_rank=0, bias=False)
-    ## BUGBUG: pad seems ignored? It looks like auto_padding=(False, False, True) gets passed on as m_audoPad = { false, false, true }
     c.update_signature(5)
     data = [np.array([[2, 6, 4, 8, 6]])]   # like a audio sequence, in a static dimension
     out = c(data)
-    exp = [[[24, 40, 38]]]
+    exp = [[10, 24, 40, 38, 44]]
     np.testing.assert_array_equal(out, exp, err_msg='Error in 1D convolution without reduction dimension')
 
 ##########################################################

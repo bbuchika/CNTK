@@ -32,6 +32,25 @@ using namespace std;
 
 namespace CNTK
 {
+    // This method completely replaces the current schedule with the new schedule. However, since
+    // the new schedule starts at time 0 and the current time (in terms of the number of elapsed
+    // samples or sweeps) t can be greater than 0, we need to adjust the new schedule by t time
+    // units, so that it takes effect from the current point in time onwards.
+    CNTK_API void Learner::ResetLearningRate(const LearningRateSchedule& learningRateSchedule)
+    {
+        m_learningRateSchedule.m_schedule.clear();
+        m_learningRateSchedule.m_epochSize = learningRateSchedule.m_epochSize;
+        m_learningRateSchedule.m_unit = learningRateSchedule.m_unit;
+
+        // copy the new schedule over, adjusting for the current varlue of the corresponding unit
+        // (samples or sweeps) count.
+        auto currentCount = m_learningRateSchedule.IsSweepBased() ? m_sweepCount : m_sampleCount;
+        for (const auto& kv : learningRateSchedule.m_schedule) 
+        {
+            m_learningRateSchedule.m_schedule[currentCount + kv.first] = kv.second;
+        }
+    }
+
     template <typename ElementType>
     /*static*/ shared_ptr<const Matrix<ElementType>> LearnerBase::GetMatrix(const NDArrayViewPtr& arrayView)
     {
@@ -179,7 +198,6 @@ namespace CNTK
                              AdditionalLearningOptions additionalOptions,
                              bool allocateSmoothGradients /* = true */)
                              : Learner(parameters, learningRateSchedule),
-                             m_minibatchCount(0),
                              m_additionalOptions(additionalOptions)
     {
         std::unordered_set<Parameter> uniqueParameters(parameters.begin(), parameters.end());
@@ -511,6 +529,36 @@ namespace CNTK
         Matrix<ElementType>::ScaleAndAdd(ElementType(-learningRate / aveMultiplier), *gradientMatrix, *parameterMatrix);
     }
 
+    LearnerAdaDelta::LearnerAdaDelta(
+        const std::vector<Parameter>& parameters,
+        double rho, double epsilon,
+        AdditionalLearningOptions additionalOptions)
+        : LearnerBase(parameters, LearningRateSchedule(1, LearningRateSchedule::UnitType::Sample), additionalOptions, /*allocateSmoothGradients*/ false),
+        m_rho(rho), m_epsilon(epsilon)
+    {
+        for (const auto& parameter : parameters)
+        {
+            const auto shape = GetMatrixShape(parameter);
+            NDArrayViewPtr view = AllocateNDArrayView(parameter, { shape[0], 2 * shape[1] });
+            m_smoothedGradientValues.emplace(parameter, view);
+        }
+    }
+
+    /*virtual*/ void LearnerAdaDelta::Update(const Parameter& parameter, const NDArrayViewPtr& gradientValue,
+        const NDArrayViewPtr& smoothedGradientValue, size_t trainingSampleCount) const /*override*/
+    {
+        DISPATCH_TO_TYPED_UPDATE_FUNCTION;
+    }
+
+    template <typename ElementType>
+    void LearnerAdaDelta::Update(const Parameter& parameter, const NDArrayViewPtr& gradientValue,
+        const NDArrayViewPtr& smoothedGradientValue, size_t trainingSampleCount) const
+    {
+        GET_WRITABLE_MATRICES
+
+        smoothedGradientMatrix->AdaDeltaUpdate(*gradientMatrix, *parameterMatrix, (ElementType)m_rho, (ElementType)m_epsilon);
+    }
+
     /*static*/ const double LearnerFSAdaGrad::s_targetAdagradAvDenom = 1.0;
 
     LearnerFSAdaGrad::LearnerFSAdaGrad(const vector<Parameter>& parameters,
@@ -674,24 +722,24 @@ namespace CNTK
         return MakeSharedObject<LearnerNesterov>(parameters, learningRateSchedule, momentumSchedule, unitGain, additionalOptions);
     }
 
+    LearnerPtr FSAdaGradLearner(const vector<Parameter>& parameters,
+                                const LearningRateSchedule& learningRateSchedule,
+                                const MomentumSchedule& momentumSchedule,
+                                bool unitGain, /*=true*/
+                                const MomentumSchedule& varianceMomentumSchedule, /*= MomentumAsTimeConstantSchedulePerSample(2 * 3600 * 100)*/
+                                AdditionalLearningOptions additionalOptions /*= AdditionalLearningOptions()*/)
+    {
+        return MakeSharedObject<LearnerFSAdaGrad>(parameters, learningRateSchedule, momentumSchedule, unitGain, varianceMomentumSchedule, additionalOptions);
+    }
+
     LearnerPtr AdamLearner(const vector<Parameter>& parameters,
                            const LearningRateSchedule& learningRateSchedule,
                            const MomentumSchedule& momentumSchedule,
                            bool unitGain, /*=true*/
                            const MomentumSchedule& varianceMomentumSchedule, /*= MomentumAsTimeConstantSchedulePerSample(2 * 3600 * 100)*/
-                           bool lowMemory, /*= true*/
                            AdditionalLearningOptions additionalOptions /*= AdditionalLearningOptions()*/)
     {
-        // TODO: Due to history reason, the legacy AdamLearner using FSAdaGrad implementation instead of the original paper implementation.
-        //      To keep interface backward compatible, the new adam will be enabled only when lowMemory is false.
-        if (!lowMemory)
-        {
-            return MakeSharedObject<LearnerAdam>(parameters, learningRateSchedule, momentumSchedule, unitGain, varianceMomentumSchedule, additionalOptions);
-        }
-        else
-        {
-            return MakeSharedObject<LearnerFSAdaGrad>(parameters, learningRateSchedule, momentumSchedule, unitGain, varianceMomentumSchedule, additionalOptions);
-        }
+        return MakeSharedObject<LearnerAdam>(parameters, learningRateSchedule, momentumSchedule, unitGain, varianceMomentumSchedule, additionalOptions);
     }
 
     LearnerPtr AdaGradLearner(const vector<Parameter>& parameters,
@@ -709,5 +757,12 @@ namespace CNTK
                               AdditionalLearningOptions additionalOptions /*= AdditionalLearningOptions()*/)
     {
         return MakeSharedObject<LearnerRMSProp>(parameters, learningRateSchedule, gamma, inc, dec, max, min, needAveMultiplier, additionalOptions);
+    }
+
+    LearnerPtr AdaDeltaLearner(const vector<Parameter>& parameters,
+                               double rho, double epsilon,
+                               AdditionalLearningOptions additionalOptions /*= AdditionalLearningOptions()*/)
+    {
+        return MakeSharedObject<LearnerAdaDelta>(parameters, rho, epsilon, additionalOptions);
     }
 }

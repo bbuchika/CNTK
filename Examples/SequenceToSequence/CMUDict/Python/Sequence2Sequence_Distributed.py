@@ -13,15 +13,14 @@ import _cntk_py
 import cntk
 
 from cntk import Trainer, Axis
-from cntk.device import set_default_device, gpu
-from cntk.distributed import *
+from cntk.device import try_set_default_device, gpu
+from cntk.train.distributed import *
 from cntk.io import MinibatchSource, CTFDeserializer, StreamDef, StreamDefs, INFINITELY_REPEAT, FULL_DATA_SWEEP
-from cntk.learner import learning_rate_schedule, UnitType, momentum_sgd, momentum_as_time_constant_schedule
-from cntk.ops import input_variable, cross_entropy_with_softmax, classification_error, sequence, past_value, future_value, element_select, alias, hardmax
+from cntk.learners import learning_rate_schedule, UnitType, momentum_sgd, momentum_as_time_constant_schedule
+from cntk import input, cross_entropy_with_softmax, classification_error, sequence, past_value, future_value, element_select, alias, hardmax
 from cntk.ops.functions import CloneMethod
-from cntk.training_session import *
-from cntk.utils import *
-
+from cntk.train.training_session import *
+from cntk.logging import *
 
 abs_path = os.path.dirname(os.path.abspath(__file__))
 model_path = os.path.join(abs_path, "Models")
@@ -37,7 +36,7 @@ def create_reader(path, randomize, input_vocab_dim, label_vocab_dim, size=INFINI
     return MinibatchSource(CTFDeserializer(path, StreamDefs(
         features  = StreamDef(field='S0', shape=input_vocab_dim,  is_sparse=True),
         labels    = StreamDef(field='S1', shape=label_vocab_dim,  is_sparse=True)
-    )), randomize=randomize, epoch_size = size)
+    )), randomize=randomize, max_samples = size)
 
 def create_trainer(network, epoch_size, num_quantization_bits, block_size, warm_up):
     # Instantiate the trainer object to drive the model training
@@ -68,17 +67,10 @@ def create_network(input_vocab_dim, label_vocab_dim):
     num_layers = 1
 
     # Source and target inputs to the model
-    batch_axis = Axis.default_batch_axis()
     input_seq_axis = Axis('inputAxis')
     label_seq_axis = Axis('labelAxis')
-
-    input_dynamic_axes = [batch_axis, input_seq_axis]
-    raw_input = input_variable(
-        shape=(input_vocab_dim), dynamic_axes=input_dynamic_axes, name='raw_input')
-
-    label_dynamic_axes = [batch_axis, label_seq_axis]
-    raw_labels = input_variable(
-        shape=(label_vocab_dim), dynamic_axes=label_dynamic_axes, name='raw_labels')
+    raw_input = sequence.input(shape=(input_vocab_dim), sequence_axis=input_seq_axis, name='raw_input')
+    raw_labels = sequence.input(shape=(label_vocab_dim), sequence_axis=label_seq_axis, name='raw_labels')
 
     # Instantiate the sequence to sequence translation model
     input_sequence = raw_input
@@ -170,7 +162,7 @@ def train_and_test(network, trainer, train_reader, test_reader, progress_printer
     ).train()
 
 def sequence_to_sequence_translator(train_data, test_data, epoch_size=908241, num_quantization_bits=default_quantization_bits, block_size=3200, warm_up=0, minibatch_size=72, max_epochs=10, randomize_data=False, log_to_file=None, num_mbs_per_log=10, gen_heartbeat=False):
-    _cntk_py.set_computation_network_trace_level(0)
+    cntk.debugging.set_computation_network_trace_level(0)
 
     progress_printer = ProgressPrinter(freq=num_mbs_per_log,
         tag='Training',
@@ -213,7 +205,7 @@ if __name__ == '__main__':
     if args['outputdir'] is not None:
         model_path = args['outputdir'] + "/models"
     if args['device'] is not None:
-        set_default_device(gpu(args['device']))
+        try_set_default_device(gpu(args['device']))
 
     data_path = args['datadir']
 

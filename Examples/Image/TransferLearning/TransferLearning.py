@@ -8,17 +8,20 @@ from __future__ import print_function
 import numpy as np
 import os
 from PIL import Image
-from cntk.device import set_default_device, gpu
-from cntk import load_model, Trainer, UnitType
+from cntk.device import try_set_default_device, gpu
+from cntk import load_model
+from cntk import Trainer, UnitType
 from cntk.layers import Placeholder, Constant
-from cntk.graph import find_by_name, get_node_outputs
+from cntk.logging.graph import find_by_name, get_node_outputs
 from cntk.io import MinibatchSource, ImageDeserializer, StreamDefs, StreamDef
 import cntk.io.transforms as xforms
 from cntk.layers import Dense
-from cntk.learner import momentum_sgd, learning_rate_schedule, momentum_schedule
-from cntk.ops import input_variable, cross_entropy_with_softmax, classification_error, combine, softmax
+from cntk.learners import momentum_sgd, learning_rate_schedule, momentum_schedule
+from cntk.ops import input, combine, softmax
 from cntk.ops.functions import CloneMethod
-from cntk.utils import log_number_of_parameters, ProgressPrinter
+from cntk.losses import cross_entropy_with_softmax
+from cntk.metrics import classification_error
+from cntk.logging import log_number_of_parameters, ProgressPrinter
 
 
 ################################################
@@ -96,8 +99,8 @@ def train_model(base_model_file, feature_node_name, last_hidden_node_name,
 
     # Create the minibatch source and input variables
     minibatch_source = create_mb_source(train_map_file, image_width, image_height, num_channels, num_classes)
-    image_input = input_variable((num_channels, image_height, image_width))
-    label_input = input_variable(num_classes)
+    image_input = input((num_channels, image_height, image_width))
+    label_input = input(num_classes)
 
     # Define mapping from reader streams to network inputs
     input_map = {
@@ -194,7 +197,7 @@ def eval_test_images(loaded_model, output_file, test_map_file, image_width, imag
 
 
 if __name__ == '__main__':
-    set_default_device(gpu(0))
+    try_set_default_device(gpu(0))
     # check for model and data existence
     if not (os.path.exists(_base_model_file) and os.path.exists(_train_map_file) and os.path.exists(_test_map_file)):
         print("Please run 'python install_data_and_model.py' first to get the required data and model.")

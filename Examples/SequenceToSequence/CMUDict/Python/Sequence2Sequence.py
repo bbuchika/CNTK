@@ -8,17 +8,17 @@ from __future__ import print_function
 import numpy as np
 import os
 from cntk import Trainer, Axis
-from cntk.io import MinibatchSource, CTFDeserializer, StreamDef, StreamDefs, INFINITELY_REPEAT, FULL_DATA_SWEEP
-from cntk.learner import momentum_sgd, adam_sgd, momentum_as_time_constant_schedule, learning_rate_schedule, UnitType
-from cntk.ops import input_variable, cross_entropy_with_softmax, classification_error, sequence, past_value, future_value, \
-                     element_select, alias, hardmax, placeholder_variable, combine, parameter, times, plus
+from cntk.io import MinibatchSource, CTFDeserializer, StreamDef, StreamDefs, INFINITELY_REPEAT
+from cntk.learners import momentum_sgd, fsadagrad, momentum_as_time_constant_schedule, learning_rate_schedule, UnitType
+from cntk import input, cross_entropy_with_softmax, classification_error, sequence, past_value, future_value, \
+                 element_select, alias, hardmax, placeholder, combine, parameter, times, plus
 from cntk.ops.functions import CloneMethod, load_model, Function
 from cntk.initializer import glorot_uniform
-from cntk.utils import log_number_of_parameters, ProgressPrinter, debughelpers, one_hot
-from cntk.graph import plot
+from cntk.logging import log_number_of_parameters, ProgressPrinter
+from cntk.logging.graph import plot
 from cntk.layers import *
 from cntk.layers.sequence import *
-from cntk.models.attention import *
+from cntk.layers.models.attention import *
 from cntk.layers.typing import *
 
 ########################
@@ -64,7 +64,7 @@ def create_reader(path, is_training):
     return MinibatchSource(CTFDeserializer(path, StreamDefs(
         features = StreamDef(field='S0', shape=input_vocab_dim, is_sparse=True),
         labels   = StreamDef(field='S1', shape=label_vocab_dim, is_sparse=True)
-    )), randomize = is_training, epoch_size = INFINITELY_REPEAT if is_training else FULL_DATA_SWEEP)
+    )), randomize = is_training, max_sweeps = INFINITELY_REPEAT if is_training else 1)
 
 ########################
 # define the model     #
@@ -170,9 +170,8 @@ def create_model_greedy(s2smodel):
         # which holds 'input' in its closure.
         unfold = UnfoldFrom(lambda history: s2smodel(history, input) >> hardmax,
                             until_predicate=lambda w: w[...,sentence_end_index],  # stop once sentence_end_index was max-scoring output
-                            length_increase=length_increase, initial_state=sentence_start)
-        # TODO: The signature should be changed, so that the initial_state is passed as data.
-        return unfold(dynamic_axes_like=input)
+                            length_increase=length_increase)
+        return unfold(initial_state=sentence_start, dynamic_axes_like=input)
     return model_greedy
 
 def create_criterion_function(model):
@@ -218,11 +217,11 @@ def train(train_reader, valid_reader, vocab, i2w, s2smodel, max_epochs, epoch_si
     # Instantiate the trainer object to drive the model training
     minibatch_size = 72
     lr = 0.001 if use_attention else 0.005   # TODO: can we use the same value for both?
-    learner = adam_sgd(model_train.parameters,
-                       lr       = learning_rate_schedule([lr]*2+[lr/2]*3+[lr/4], UnitType.sample, epoch_size),
-                       momentum = momentum_as_time_constant_schedule(1100),
-                       gradient_clipping_threshold_per_sample=2.3,
-                       gradient_clipping_with_truncation=True)
+    learner = fsadagrad(model_train.parameters,
+                        lr       = learning_rate_schedule([lr]*2+[lr/2]*3+[lr/4], UnitType.sample, epoch_size),
+                        momentum = momentum_as_time_constant_schedule(1100),
+                        gradient_clipping_threshold_per_sample=2.3,
+                        gradient_clipping_with_truncation=True)
     trainer = Trainer(None, criterion, learner)
 
     # Get minibatches of sequences to train with and perform model training
@@ -315,7 +314,7 @@ def evaluate_decoding(reader, s2smodel, i2w):
 # TODO: replace by a proper such class once available
 def Evaluator(model, criterion):
     from cntk import Trainer
-    from cntk.learner import momentum_sgd, learning_rate_schedule, UnitType, momentum_as_time_constant_schedule
+    from cntk.learners import momentum_sgd, learning_rate_schedule, UnitType, momentum_as_time_constant_schedule
     loss, metric = Trainer._get_loss_metric(criterion)
     parameters = set(loss.parameters)
     if model:
@@ -374,7 +373,7 @@ def translate(tokens, model_decoding, vocab, i2w, show_attention=False, max_labe
         return []
 
     # convert to one_hot
-    query = one_hot([w], len(vdict))
+    query = Value.one_hot([w], len(vdict))
     pred = model_decoding(query)
     pred = pred[0] # first sequence (we only have one) -> [len, vocab size]
     if use_attention:
@@ -468,6 +467,7 @@ def debug_attention(model, input):
 #############################
 
 if __name__ == '__main__':
+    #try_set_default_device(cpu())
 
     from _cntk_py import set_fixed_random_seed
     set_fixed_random_seed(1)

@@ -184,10 +184,22 @@ namespace CNTK
                 else if (node->OperationName() == OperationNameOf(SliceNode))
                 {
                     auto sliceNode = node->As<SliceNode<ElementType>>();
-                    primitiveFunctionConfigParameters[PrimitiveFunction::AttributeNameAxis] = AsAxis(sliceNode->Axis());
-                    primitiveFunctionConfigParameters[PrimitiveFunction::AttributeNameBeginIndex] = (int)sliceNode->BeginIndex();
-                    primitiveFunctionConfigParameters[PrimitiveFunction::AttributeNameEndIndex] = (int)sliceNode->EndIndex();
-
+                    auto axis = sliceNode->Axis(); 
+                    auto beginIndex = sliceNode->BeginIndex(); 
+                    auto endIndex = sliceNode->EndIndex(); 
+                    assert(axis.size() > 0 && axis.size() == beginIndex.size() && axis.size() == endIndex.size());
+                    if (axis.size() == 1)
+                    {
+                        primitiveFunctionConfigParameters[PrimitiveFunction::AttributeNameAxis] = AsAxis(axis[0]);
+                        primitiveFunctionConfigParameters[PrimitiveFunction::AttributeNameBeginIndex] = beginIndex[0];
+                        primitiveFunctionConfigParameters[PrimitiveFunction::AttributeNameEndIndex] = endIndex[0];
+                    }
+                    else
+                    {
+                        primitiveFunctionConfigParameters[PrimitiveFunction::AttributeNameAxisVec] = AsDictionaryValueVector(AsAxis(axis));
+                        primitiveFunctionConfigParameters[PrimitiveFunction::AttributeNameBeginIndexVec] = AsDictionaryValueVector(beginIndex);
+                        primitiveFunctionConfigParameters[PrimitiveFunction::AttributeNameEndIndexVec] = AsDictionaryValueVector(endIndex);
+                    }
                     opType = PrimitiveOpType::Slice;
                 }
                 else if (node->OperationName() == OperationNameOf(RandomSampleNode))
@@ -385,6 +397,7 @@ namespace CNTK
                     primitiveFunctionConfigParameters[PrimitiveFunction::AttributeNameLowerPad] = AsNDShape(poolingNode->LowerPad());
                     primitiveFunctionConfigParameters[PrimitiveFunction::AttributeNameUpperPad] = AsNDShape(poolingNode->UpperPad());
                     primitiveFunctionConfigParameters[PrimitiveFunction::AttributeNameCeilOutDim] = poolingNode->CeilOutDim();
+                    primitiveFunctionConfigParameters[PrimitiveFunction::AttributeNameIncludePad] = poolingNode->PoolPadMode();
 
                     opType = PrimitiveOpType::Pooling;
                 }
@@ -518,6 +531,7 @@ namespace CNTK
         {
             ComputationNetworkPtr net = make_shared<ComputationNetwork>(AsCNTKImplDeviceId(computeDevice));
             net->SetTraceLevel(Internal::GetComputationNetworkTraceLevel());
+            net->SetTrackGapNans(Internal::GetComputationNetworkTrackGapNans());
 
             auto dataType = DetectLegacyModelDataType(modelFile);
             switch (dataType)

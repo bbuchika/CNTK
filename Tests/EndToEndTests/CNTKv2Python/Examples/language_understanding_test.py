@@ -13,7 +13,8 @@ from cntk import DeviceDescriptor
 TOLERANCE_ABSOLUTE = 1E-1  # TODO: Once set_fixed_random_seed(1) is honored, this must be tightened a lot.
 
 from cntk.layers import *
-from cntk.utils import *
+from cntk.internal.utils import *
+from cntk.logging import *
 from cntk.ops import splice
 
 abs_path = os.path.dirname(os.path.abspath(__file__))
@@ -71,7 +72,7 @@ def BNBiRecurrence(fwd, bwd, test_dual=True): # special version that calls one s
 # TODO: the name is wrong
 def test_language_understanding(device_id):
     from cntk.ops.tests.ops_test_utils import cntk_device
-    DeviceDescriptor.set_default_device(cntk_device(device_id))
+    DeviceDescriptor.try_set_default_device(cntk_device(device_id))
 
     from _cntk_py import set_computation_network_trace_level, set_fixed_random_seed
     #set_computation_network_trace_level(1)

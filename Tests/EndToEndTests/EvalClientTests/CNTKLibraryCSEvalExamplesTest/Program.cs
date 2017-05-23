@@ -12,9 +12,6 @@ namespace CNTKLibraryCSEvalExamples
 {
     class Program
     {
-        private static bool isGPUDeviceAvailable;
-        private static bool isInitialized = false;
-
         static void Main(string[] args)
         {
 #if CPUONLY
@@ -23,48 +20,66 @@ namespace CNTKLibraryCSEvalExamples
             Console.WriteLine("======== Evaluate model on CPU using GPU build ========");
 #endif
 
-            CNTKLibraryManagedExamples.EvaluationSingleImage(DeviceDescriptor.CPUDevice);
-            CNTKLibraryManagedExamples.EvaluationBatchOfImages(DeviceDescriptor.CPUDevice);
-            CNTKLibraryManagedExamples.EvaluateMultipleImagesInParallel(DeviceDescriptor.CPUDevice);
-            CNTKLibraryManagedExamples.EvaluationSingleSequenceUsingOneHot(DeviceDescriptor.CPUDevice);
-            CNTKLibraryManagedExamples.EvaluationBatchOfSequencesUsingOneHot(DeviceDescriptor.CPUDevice);
+            if (ShouldRunOnCpu())
+            {
+                var device = DeviceDescriptor.CPUDevice;
 
-            if (IsGPUAvailable())
+                CNTKLibraryManagedExamples.EvaluationSingleImage(device);
+                // Run memory tests.
+                MemoryTests.ValidateObjectReferences(device);
+                CNTKLibraryManagedExamples.EvaluationBatchOfImages(device);
+                CNTKLibraryManagedExamples.EvaluateMultipleImagesInParallel(device);
+                // Run memory tests again.
+                MemoryTests.ValidateObjectReferences(device);
+
+                CNTKLibraryManagedExamples.EvaluationSingleSequenceUsingOneHot(device);
+                CNTKLibraryManagedExamples.EvaluationBatchOfSequencesUsingOneHot(device);
+                CNTKLibraryManagedExamples.EvaluationSingleSequenceUsingSparse(device);
+                // It is sufficient to test loading model from memory buffer only on CPU.
+                CNTKLibraryManagedExamples.LoadModelFromMemory(device);
+
+                MemoryTests.WriteOutputs();
+            }
+
+            if (ShouldRunOnGpu())
             {
                 Console.WriteLine(" ====== Evaluate model on GPU =====");
-                CNTKLibraryManagedExamples.EvaluationSingleImage(DeviceDescriptor.GPUDevice(0));
-                CNTKLibraryManagedExamples.EvaluationBatchOfImages(DeviceDescriptor.GPUDevice(0));
-                CNTKLibraryManagedExamples.EvaluateMultipleImagesInParallel(DeviceDescriptor.GPUDevice(0));
-                CNTKLibraryManagedExamples.EvaluationSingleSequenceUsingOneHot(DeviceDescriptor.GPUDevice(0));
-                CNTKLibraryManagedExamples.EvaluationBatchOfSequencesUsingOneHot(DeviceDescriptor.GPUDevice(0));
+                var device = DeviceDescriptor.GPUDevice(0);
+                // Run memory tests.
+                MemoryTests.ValidateObjectReferences(device);
+                CNTKLibraryManagedExamples.EvaluationSingleImage(device);
+                CNTKLibraryManagedExamples.EvaluationBatchOfImages(device);
+                CNTKLibraryManagedExamples.EvaluateMultipleImagesInParallel(device);
+                // Run memory tests.
+                MemoryTests.ValidateObjectReferences(device);
+
+                CNTKLibraryManagedExamples.EvaluationSingleSequenceUsingOneHot(device);
+                CNTKLibraryManagedExamples.EvaluationBatchOfSequencesUsingOneHot(device);
+                CNTKLibraryManagedExamples.EvaluationSingleSequenceUsingSparse(device);
+
+                // Run memory tests again.
+                MemoryTests.WriteOutputs();
             }
 
             Console.WriteLine("======== Evaluation completes. ========");
         }
 
-        static bool IsGPUAvailable()
+        static bool ShouldRunOnGpu()
         {
-            if (!isInitialized)
-            {
 #if CPUONLY
-                isGPUDeviceAvailable = false;
+            return false;
 #else
-                string testDeviceSetting = Environment.GetEnvironmentVariable("TEST_DEVICE");
+            string testDeviceSetting = Environment.GetEnvironmentVariable("TEST_DEVICE");
 
-                // Check the environment variable TEST_DEVICE to decide whether to run on a CPU-only device.
-                if (!string.IsNullOrEmpty(testDeviceSetting) && string.Equals(testDeviceSetting.ToLower(), "cpu"))
-                {
-                    isGPUDeviceAvailable = false;
-                }
-                else
-                {
-                    isGPUDeviceAvailable = true;
-                }
+            return (string.IsNullOrEmpty(testDeviceSetting) || string.Equals(testDeviceSetting.ToLower(), "gpu"));
 #endif
-                isInitialized = true;
-            }
+        }
 
-            return isGPUDeviceAvailable;
+        static bool ShouldRunOnCpu()
+        {
+            string testDeviceSetting = Environment.GetEnvironmentVariable("TEST_DEVICE");
+
+            return (string.IsNullOrEmpty(testDeviceSetting) || string.Equals(testDeviceSetting.ToLower(), "cpu"));
         }
     }
 }

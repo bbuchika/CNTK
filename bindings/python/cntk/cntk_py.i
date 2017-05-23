@@ -24,6 +24,8 @@
 %rename(momentum_sgd_learner) CNTK::MomentumSGDLearner;
 %rename(gpu_device) CNTK::DeviceDescriptor::GPUDevice;
 %rename(cpu_device) CNTK::DeviceDescriptor::CPUDevice;
+%rename(GPUProperties) CNTK::GPUProperties;
+%rename(get_gpu_properties) CNTK::DeviceDescriptor::GetGPUProperties;
 %rename(times_transpose) CNTK::TransposeTimes;
 %rename(sequence_slice) CNTK::Sequence::Slice;
 %rename(sequence_reduce_sum) CNTK::Sequence::ReduceSum;
@@ -66,6 +68,7 @@
 %warnfilter(401) CNTK::NDMask;
 %warnfilter(401) CNTK::Function;
 %warnfilter(401) CNTK::Trainer;
+%warnfilter(401) CNTK::Evaluator;
 %warnfilter(401) CNTK::Value;
 %warnfilter(401) CNTK::BackPropState;
 %warnfilter(401) CNTK::MinibatchSource;
@@ -92,7 +95,8 @@
 // consumption in proxy objects.
 %rename(train_minibatch_overload_for_minibatchdata) CNTK::Trainer::TrainMinibatch(const std::unordered_map<Variable, MinibatchData>&, const DeviceDescriptor& = DeviceDescriptor::UseDefaultDevice());
 %rename(train_minibatch_overload_for_minibatchdata) CNTK::Trainer::TrainMinibatch(const std::unordered_map<Variable, MinibatchData>&, std::unordered_map<Variable, ValuePtr>&, const DeviceDescriptor& = DeviceDescriptor::UseDefaultDevice());
-%rename(test_minibatch_overload_for_minibatchdata) CNTK::Trainer::TestMinibatch(const std::unordered_map<Variable, MinibatchData>&, const DeviceDescriptor& = DeviceDescriptor::UseDefaultDevice());
+%rename(test_minibatch_overload_for_minibatchdata) CNTK::Evaluator::TestMinibatch(const std::unordered_map<Variable, MinibatchData>&, const DeviceDescriptor& = DeviceDescriptor::UseDefaultDevice());
+%rename(test_minibatch_overload_for_minibatchdata) CNTK::Evaluator::TestMinibatch(const std::unordered_map<Variable, MinibatchData>&, std::unordered_map<Variable, ValuePtr>& , const DeviceDescriptor& = DeviceDescriptor::UseDefaultDevice());
 
 %rename(l1_regularization_weight) CNTK::AdditionalLearningOptions::l1RegularizationWeight;
 %rename(l2_regularization_weight) CNTK::AdditionalLearningOptions::l2RegularizationWeight;
@@ -103,6 +107,7 @@
 %rename("%(utitle)s", %$isvariable) "";
 
 %template() std::vector<bool>;
+%template() std::vector<int>;
 %template() std::vector<size_t>;
 %template() std::vector<float>;
 %template() std::vector<double>;
@@ -124,6 +129,7 @@
 %template() std::vector<std::shared_ptr<CNTK::Learner>>;
 %template() std::vector<std::shared_ptr<CNTK::DistributedLearner>>;
 %template() std::vector<std::shared_ptr<CNTK::Trainer>>;
+%template() std::vector<std::shared_ptr<CNTK::Evaluator>>;
 %template() std::vector<std::shared_ptr<CNTK::ProgressWriter>>;
 %template() std::pair<double, double>;
 %template() std::pair<size_t, double>;
@@ -152,7 +158,9 @@
 %ignore CNTK::Internal::IsRenamingFunctionsAllowed;
 %ignore CNTK::Internal::IsAutomaticUnpackingOfPackedValuesDisabled;
 %ignore CNTK::Internal::GetComputationNetworkTraceLevel;
+%ignore CNTK::Internal::GetComputationNetworkTrackGapNans;
 %ignore CNTK::Internal::TensorBoardFileWriter::TensorBoardFileWriter(const std::wstring& dir, const ::Microsoft::MSR::CNTK::ComputationNetworkPtr& modelToVisualize = nullptr);
+%ignore CNTK::Internal::Convolution; 
 
 %ignore CNTK::Function::Function(const std::vector<Variable>& inputs, Dictionary&& functionConfig, const std::wstring& name = L"", const std::wstring& uid = Internal::GenerateUid(L"UserDefinedFunction"));
 
@@ -598,6 +606,7 @@ public:
 // Callback support
 %feature("director") CNTK::Function;
 %feature("nodirector") CNTK::Function::OnPlaceholdersReplaced;
+%feature("nodirector") CNTK::Function::OpName;
 
 %feature("director") CNTK::Learner;
 %feature("nodirector") CNTK::Learner::Parameters;
@@ -819,7 +828,9 @@ public:
     // we do not want. Therefor, we have to explicitly tell it for which ones it should do it.
     std::unordered_map<CNTK::Variable, CNTK::ValuePtr>& outputsToFetch,
     std::unordered_map<CNTK::Variable, CNTK::ValuePtr>& outputs,
-    std::unordered_map<CNTK::Variable, CNTK::ValuePtr>& backPropagatedGradientValuesForInputs
+    std::unordered_map<CNTK::Variable, CNTK::ValuePtr>& backPropagatedGradientValuesForInputs,
+    std::unordered_map<CNTK::Variable, CNTK::ValuePtr>& gradients,
+    std::unordered_map<CNTK::Variable, CNTK::ValuePtr>& outputsToEvaluate
 {
     if (!PyDict_Check($input)) {
         SWIG_exception(SWIG_TypeError, "dictionary expected");
@@ -848,7 +859,9 @@ public:
     // Swig would create this conversion for the 'const' variants as well, which
     // we do not want. Therefor, we have to explicitly tell it for which ones it should do it.
     std::unordered_map<CNTK::Variable, CNTK::ValuePtr>& outputs,
-    std::unordered_map<CNTK::Variable, CNTK::ValuePtr>& backPropagatedGradientValuesForInputs
+    std::unordered_map<CNTK::Variable, CNTK::ValuePtr>& backPropagatedGradientValuesForInputs,
+    std::unordered_map<CNTK::Variable, CNTK::ValuePtr>& gradients,
+    std::unordered_map<CNTK::Variable, CNTK::ValuePtr>& outputsToEvaluate
 {
     // $1 is the C++ input that needs to be filled with the data from the PyDict
     for (auto it: $1)
@@ -891,7 +904,7 @@ public:
 
                 CNTK::ValuePtr* cpp_value = reinterpret_cast<CNTK::ValuePtr*>(cpp_val);
 
-                $1[it.first] = *cpp_value;
+                $1[it.first] = cpp_value ? *cpp_value : nullptr;
                 break;
             }
         }
@@ -1321,6 +1334,7 @@ std::unordered_map<CNTK::StreamInformation, std::pair<CNTK::NDArrayViewPtr, CNTK
 %unordered_map_ref_conversion(CNTK::Variable,          $descriptor(CNTK::Variable *),          CNTK::Variable,       $descriptor(CNTK::Variable *));
 
 %shared_ptr(CNTK::IDictionarySerializable)
+%shared_ptr(CNTK::Evaluator)
 %shared_ptr(CNTK::Trainer)
 %shared_ptr(CNTK::TrainingSession)
 %shared_ptr(CNTK::Function)
@@ -1619,6 +1633,7 @@ namespace CNTK {
 
         const PyObject* Data() const
         {
+            Py_INCREF(m_userData);
             return m_userData;
         }
 

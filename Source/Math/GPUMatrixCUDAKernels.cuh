@@ -5199,6 +5199,62 @@ __global__ void _adam4BlockSparseCol(CUDA_LONG size,
     }
 }
 
+template <class ElemType>
+__global__ void _adadelta(CUDA_LONG size, ElemType* grad, ElemType* smoothAda, ElemType* smoothX2, ElemType* val,
+    ElemType rho, ElemType epsilon)
+{
+    CUDA_LONG idx = blockIdx.x * blockDim.x + threadIdx.x;
+    CUDA_LONG stride = blockDim.x * gridDim.x;
+    for (; idx < size; idx += stride)
+    {
+        ElemType g = grad[idx];
+        ElemType adaSqr = rho * smoothAda[idx] + (1.0f - rho) * g * g;
+        smoothAda[idx] = adaSqr;
+        ElemType x2 = smoothX2[idx];
+        ElemType deltaX;
+        if (sizeof(ElemType) == sizeof(double))
+        {
+            deltaX = -sqrt(x2 + epsilon) * rsqrt(adaSqr + epsilon) * g;
+        }
+        else
+        {
+            deltaX = -sqrtf(x2 + epsilon) * rsqrtf(adaSqr + epsilon) * g;
+        }
+
+        smoothX2[idx] = rho * smoothX2[idx] + (1.0f - rho) * deltaX * deltaX;
+        val[idx] += deltaX;
+    }
+}
+
+template <class ElemType>
+__global__ void _adadelta4BlockSparseCol(CUDA_LONG size,
+    ElemType* grad_bsc, const GPUSPARSE_INDEX_TYPE* colOrRow2blockId, const size_t len,
+    ElemType* smoothAda, ElemType* smoothX2, ElemType* val,
+    ElemType rho, ElemType epsilon)
+{
+    CUDA_LONG idx = blockIdx.x * blockDim.x + threadIdx.x;
+    CUDA_LONG stride = blockDim.x * gridDim.x;
+    for (; idx < size; idx += stride)
+    {
+        ElemType g = _getvalue4BlockSparseCol(grad_bsc, colOrRow2blockId, len, idx);
+        ElemType adaSqr = rho * smoothAda[idx] + (1.0f - rho) * g * g;
+        smoothAda[idx] = adaSqr;
+        ElemType x2 = smoothX2[idx];
+        ElemType deltaX;
+        if (sizeof(ElemType) == sizeof(double))
+        {
+            deltaX = -sqrt(x2 + epsilon) * rsqrt(adaSqr + epsilon) * g;
+        }
+        else
+        {
+            deltaX = -sqrtf(x2 + epsilon) * rsqrtf(adaSqr + epsilon) * g;
+        }
+
+        smoothX2[idx] = rho * smoothX2[idx] + (1.0f - rho) * deltaX * deltaX;
+        val[idx] += deltaX;
+    }
+}
+
 // Calculate alpha in forward-backward calculation. equation (6), (7) in http://machinelearning.wustl.edu/mlpapers/paper_files/icml2006_GravesFGS06.pdf
 // GPU x dimension corresponds to utterances, y dimension corresponds to phone sequence in each utterance
 // prob (input): the posterior output from the network
@@ -5483,6 +5539,69 @@ __global__ void _assignTotalScore(ElemType *betaScore,
 
         betaScore[alphaId_0] = logaddk(betaScore[alphaId_0 + 1], betaScore[alphaId_0 + 2]);
         totalScore[uttId] = betaScore[alphaId_0];
+    }
+}
+
+template<class ElemType>
+__global__ void _assignOneHot(ElemType *indices,
+                                  ElemType *targetBuffer,
+                                  size_t num_class,
+                                  size_t num_item,
+                                  size_t num_element)
+{
+    const CUDA_LONG index = blockIdx.x * blockDim.x + threadIdx.x;
+    if (index < num_element)
+    {
+        if (indices[index] >= 0 && indices[index] < num_class)
+        {
+            size_t block_id = index / num_item;
+            size_t item_id = index % num_item;
+            targetBuffer[block_id * num_class * num_item + item_id + num_item * (size_t)indices[index]] = 1;
+        }
+    }
+}
+
+template<class ElemType>
+__global__ void _assignOneHotAsSparse(ElemType *indices,
+                                      GPUSPARSE_INDEX_TYPE *secondaryIndices,
+                                      GPUSPARSE_INDEX_TYPE *majorIndices,
+                                      ElemType *targetBuffer,
+                                      size_t num_class,
+                                      int num_item,
+                                      size_t num_rows,
+                                      size_t num_columns,
+                                      size_t num_elements)
+{
+    const CUDA_LONG index = blockIdx.x * blockDim.x + threadIdx.x;
+    if (index < num_elements)
+    {
+        int block_id = index / num_item;
+        int item_id = index % num_item;
+        // for invalid indices, theorically they should not belong to nz elements.
+        // but if we scan the indices to count the valid indices number,
+        // it will be difficult for parallel calculation, especially on GPU.
+        // here we chose to keep those elements in nz element list, but with value 0
+        // it is tricky, but the data view is correct.
+        if (indices[index] >= 0 && indices[index] < num_class)
+        {
+            targetBuffer[index] = 1;
+            majorIndices[index] = (block_id * num_class * num_item + item_id + num_item * (int)indices[index]) % (num_rows * num_class);
+        }
+        else
+        {
+            targetBuffer[index] = 0;
+            majorIndices[index] = (block_id * num_class * num_item + item_id) % (num_rows * num_class);
+        }
+    }
+
+    if (index  < num_columns)
+    {
+        secondaryIndices[index + 1] = num_rows * (index + 1);
+    }
+
+    if (index == 0)
+    {
+        secondaryIndices[0] = 0;
     }
 }
 

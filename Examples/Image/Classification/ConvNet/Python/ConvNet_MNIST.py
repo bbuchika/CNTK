@@ -20,7 +20,7 @@ def create_reader(path, is_training, input_dim, label_dim):
     return cntk.io.MinibatchSource(cntk.io.CTFDeserializer(path, cntk.io.StreamDefs(
         features  = cntk.io.StreamDef(field='features', shape=input_dim),
         labels    = cntk.io.StreamDef(field='labels',   shape=label_dim)
-    )), randomize=is_training, epoch_size = cntk.io.INFINITELY_REPEAT if is_training else cntk.io.FULL_DATA_SWEEP)
+    )), randomize=is_training, max_sweeps = cntk.io.INFINITELY_REPEAT if is_training else 1)
 
 
 # Creates and trains a feedforward classification model for MNIST images
@@ -32,8 +32,8 @@ def convnet_mnist(debug_output=False):
     num_output_classes = 10
 
     # Input variables denoting the features and label data
-    input_var = cntk.ops.input_variable((num_channels, image_height, image_width), np.float32)
-    label_var = cntk.ops.input_variable(num_output_classes, np.float32)
+    input_var = cntk.ops.input((num_channels, image_height, image_width), np.float32)
+    label_var = cntk.ops.input(num_output_classes, np.float32)
 
     # Instantiate the feedforward classification model
     scaled_input = cntk.ops.element_times(cntk.ops.constant(0.00390625), input_var)
@@ -66,7 +66,7 @@ def convnet_mnist(debug_output=False):
 
     # Instantiate the trainer object to drive the model training
     learner = cntk.learner.momentum_sgd(z.parameters, lr_schedule, mm_schedule)
-    progress_printer = cntk.utils.ProgressPrinter(tag='Training', num_epochs=max_epochs)
+    progress_printer = cntk.logging.ProgressPrinter(tag='Training', num_epochs=max_epochs)
     trainer = cntk.Trainer(z, (ce, pe), learner, progress_printer)
 
     # define mapping from reader streams to network inputs
@@ -75,7 +75,7 @@ def convnet_mnist(debug_output=False):
         label_var : reader_train.streams.labels
     }
 
-    cntk.utils.log_number_of_parameters(z) ; print()
+    cntk.logging.log_number_of_parameters(z) ; print()
 
     # Get minibatches of images to train with and perform model training
     for epoch in range(max_epochs):       # loop over epochs

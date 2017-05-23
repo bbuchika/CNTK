@@ -30,14 +30,23 @@ namespace CNTK
             NOT_IMPLEMENTED;
     }
 
+    template <typename T>
+    inline bool IsObjectExpired(std::weak_ptr<T> ptrToObject)
+    {
+        if ((ptrToObject.owner_before(std::weak_ptr<T>{}) || std::weak_ptr<T>{}.owner_before(ptrToObject)) && ptrToObject.expired())
+            return true;
+        else
+            return false;
+    }
+
     inline DEVICEID_TYPE AsCNTKImplDeviceId(const DeviceDescriptor& device)
     {
         if (device.Type() == DeviceKind::CPU)
             return CPUDEVICE;
-        else if (device.Type() == DeviceKind::GPU)
+        if (device.Type() == DeviceKind::GPU)
             return device.Id();
-        else
-            NOT_IMPLEMENTED;
+
+        LogicError("Invalid device type (%u).", (unsigned int)device.Type());
     }
 
     inline Microsoft::MSR::CNTK::MatrixFormat AsCNTKImplMatrixFormat(StorageFormat storageFormat)
@@ -235,6 +244,7 @@ namespace CNTK
     inline std::vector<DictionaryValue> AsDictionaryValueVector(const std::vector<T>& elementVector)
     {
         static_assert(std::is_same<T, bool>::value ||
+                      std::is_same<T, int>::value ||
                       std::is_same<T, size_t>::value ||
                       std::is_same<T, float>::value ||
                       std::is_same<T, double>::value ||
@@ -253,6 +263,7 @@ namespace CNTK
     inline std::vector<T> AsVector(const std::vector<DictionaryValue>& dictionaryValueVector)
     {
         static_assert(std::is_same<T, bool>::value ||
+                      std::is_same<T, int>::value || 
                       std::is_same<T, size_t>::value ||
                       std::is_same<T, float>::value ||
                       std::is_same<T, double>::value ||
@@ -311,6 +322,14 @@ namespace CNTK
         return Axis(CNTKInternalAxisIdx - 1);
     }
 
+    inline std::vector<Axis> AsAxis(std::vector<int> CNTKInternalAxis)
+    {
+        std::vector<Axis> retAxisVec; 
+        for (auto& axisIdx : CNTKInternalAxis)
+            retAxisVec.push_back(AsAxis(axisIdx));
+        return retAxisVec;
+    }
+
     inline int AsCNTKInternalAxisIdx(const Axis& axis)
     {
         if (axis == Axis::AllStaticAxes())
@@ -328,13 +347,24 @@ namespace CNTK
         return (int)(axis.StaticAxisIndex() + 1);
     }
 
-    inline std::pair<NDShape, NDShape> GetConvolutionOutputMapCountAndKernelShape(const NDShape& convolutionMapShape, const NDShape& operandShape)
+    inline std::vector<int> AsCNTKInternalAxisIdx(const std::vector<Axis>& axisVec)
+    {
+        std::vector<int> retAxisVec; 
+        for (auto& axis : axisVec)
+            retAxisVec.push_back(AsCNTKInternalAxisIdx(axis)); 
+        return retAxisVec; 
+    }
+
+    inline std::pair<NDShape, NDShape> GetConvolutionOutputMapCountAndKernelShape(const NDShape& convolutionMapShape, const NDShape& operandShape, bool transpose)
     {
         NDShape kernelShape = convolutionMapShape.SubShape(0, operandShape.Rank());
         auto outputMapCount = convolutionMapShape.SubShape(kernelShape.Rank());
-        NDShape paddedOutputMapCount(operandShape.Rank(), 1);
+        auto shapeRank = operandShape.Rank(); 
+        NDShape paddedOutputMapCount(shapeRank, 1);
         for (size_t i = 0; i < outputMapCount.Rank(); ++i)
-            paddedOutputMapCount[paddedOutputMapCount.Rank() - 1 - i] = outputMapCount[outputMapCount.Rank() - 1 - i];
+            paddedOutputMapCount[shapeRank - 1 - i] = outputMapCount[outputMapCount.Rank() - 1 - i];
+        if (transpose && paddedOutputMapCount[shapeRank - 1] == NDShape::InferredDimension)  // conovlution transpose, the mapCount in depth is derived from operandShape 
+            paddedOutputMapCount[shapeRank - 1] = operandShape[shapeRank - 1];
 
         return{ paddedOutputMapCount, kernelShape };
     }
@@ -513,6 +543,15 @@ namespace CNTK
     }
 
     bool IsFirstOutputOfMultiOutputUDF(const Variable& var);
+    inline  bool IsConstantScalar(const Variable& var)
+    {
+        return var.IsConstant() && (var.Shape().TotalSize() == 1);
+    }
+
+    inline Variable PlaceholderLike(const Variable& var)
+    {
+        return PlaceholderVariable(var.Shape(), var.GetDataType(), var.Name(), var.DynamicAxes());
+    }
 
     std::vector<Axis> DynamicAxesFromInternalDynamicAxisName(const std::wstring& internalDynamicAxisName);
 
@@ -587,7 +626,7 @@ namespace CNTK
         static std::pair<std::shared_ptr<const Microsoft::MSR::CNTK::Matrix<ElementType>>, Microsoft::MSR::CNTK::MBLayoutPtr> GetCNTKImplMatrixAndMBLayoutFromValueObject(const Variable& var, const ValuePtr& value);
 
         template <typename ElementType>
-        static ValuePtr GetValueObjectFromCNTKImplMatrixAndMBLayout(const NDShape& sampleShape, const Microsoft::MSR::CNTK::Matrix<ElementType>& matrix, const Microsoft::MSR::CNTK::MBLayoutPtr& layout, bool readOnly = true);
+        static ValuePtr GetValueObjectFromCNTKImplMatrixAndMBLayout(const NDShape& sampleShape, const std::vector<Axis>& sampleDynamicAxes, const Microsoft::MSR::CNTK::Matrix<ElementType>& matrix, const Microsoft::MSR::CNTK::MBLayoutPtr& layout, bool readOnly = true);
 
         template <typename ElementType>
         static ValuePtr GetValueObjectFromCNTKImplMatrixAndMBLayout(const Variable& var, const Microsoft::MSR::CNTK::Matrix<ElementType>& matrix, const Microsoft::MSR::CNTK::MBLayoutPtr& layout, bool readOnly = true);

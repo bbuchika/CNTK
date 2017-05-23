@@ -43,6 +43,9 @@ struct V2LibraryTestFixture
         // Lets disable automatic unpacking of PackedValue object to detect any accidental unpacking
         // which will have a silent performance degradation otherwise
         Internal::SetAutomaticUnpackingOfPackedValues(/*disable =*/ true);
+
+        // Turn on gap nan tracking
+        Internal::SetComputationNetworkTrackGapNans(true);
     }
 };
 
@@ -70,7 +73,8 @@ inline void ReportFailure(const char* format, ...)
 static const double relativeTolerance = 0.001f;
 static const double absoluteTolerance = 0.000001f;
 
-bool IsGPUAvailable();
+bool ShouldRunOnCpu();
+bool ShouldRunOnGpu();
 
 template <typename ElementType>
 inline void FloatingPointCompare(ElementType actual, ElementType expected, const char* message)
@@ -421,6 +425,71 @@ inline std::pair<NDArrayViewPtr, NDArrayViewPtr> GenerateSparseSequence(size_t v
     return{ inputValueData->DeepClone(), sparseData };
 }
 
+template <typename ElementType>
+std::tuple<std::vector<ElementType>, std::vector<SparseIndexType>, std::vector<SparseIndexType>, std::vector<ElementType>, size_t> GenerateSequenceInCSC(size_t dimension, size_t sequenceLength)
+{
+    auto numMatrixRows = dimension;
+    auto numMatrixCols = sequenceLength;
+    std::vector<SparseIndexType> colsStarts(numMatrixCols + 1);
+
+    std::default_random_engine randomG;
+    std::uniform_int_distribution<int> numValuesDistribution(0, static_cast<int>(numMatrixRows));
+    colsStarts[0] = 0;
+    int numNonZeroValues = 0;
+    for (size_t i = 1; i <= numMatrixCols; ++i)
+    {
+        int numValuesInCurrentCol = numValuesDistribution(randomG);
+        numNonZeroValues += numValuesInCurrentCol;
+        colsStarts[i] = colsStarts[i - 1] + numValuesInCurrentCol;
+    }
+    if (numNonZeroValues == 0)
+    {
+        // The uniform distribution does not generate any non-zero values, force to have non-zero values at 1 column.
+        int colHavingNonZeroValue = rand() % numMatrixCols;
+        std::uniform_int_distribution<int> uniformDistribution(1, static_cast<int>(numMatrixRows));
+
+        colsStarts[0] = 0;
+        numNonZeroValues = 0;
+        for (size_t i = 1; i <= numMatrixCols; ++i)
+        {
+            int numValuesInCurrentCol = 0;
+            if (i == colHavingNonZeroValue + 1)
+            {
+                numValuesInCurrentCol = uniformDistribution(randomG);
+            }
+            numNonZeroValues += numValuesInCurrentCol;
+            colsStarts[i] = colsStarts[i - 1] + numValuesInCurrentCol;
+        }
+    }
+
+    // Now fill the actual values
+    std::vector<ElementType> nonZeroValues(numNonZeroValues);
+    std::vector<SparseIndexType> rowIndices(numNonZeroValues);
+    size_t nnzIndex = 0;
+    std::vector<ElementType> referenceDenseData(dimension * sequenceLength);
+    for (size_t j = 0; j < numMatrixCols; ++j)
+    {
+        size_t numRowsWithValuesInCurrentCol = colsStarts[j + 1] - colsStarts[j];
+        size_t numValuesWritten = 0;
+        std::unordered_set<int> rowsWrittenTo;
+        while (numValuesWritten < numRowsWithValuesInCurrentCol)
+        {
+            int rowIndex = rand() % numMatrixRows;
+            if (rowsWrittenTo.insert(rowIndex).second)
+            {
+                ElementType value = ((ElementType)rand()) / RAND_MAX;
+                nonZeroValues[nnzIndex] = value;
+                referenceDenseData[(j * numMatrixRows) + rowIndex] = value;
+                rowIndices[nnzIndex] = rowIndex;
+                numValuesWritten++;
+                nnzIndex++;
+            }
+        }
+    }
+
+    return std::make_tuple(referenceDenseData, colsStarts, rowIndices, nonZeroValues, numNonZeroValues);
+}
+
 #pragma warning(pop)
 
 inline NDShape CreateShape(size_t numAxes, size_t maxDimSize)
@@ -509,7 +578,7 @@ inline FunctionPtr Embedding(const Variable& input, size_t embeddingDim, const D
     return Times(embeddingParameters, input);
 }
 
-inline FunctionPtr LSTMSequenceClassiferNet(const Variable& input, size_t numOutputClasses, size_t embeddingDim, size_t LSTMDim, size_t cellDim, const DeviceDescriptor& device, const std::wstring& outputName)
+inline FunctionPtr LSTMSequenceClassifierNet(const Variable& input, size_t numOutputClasses, size_t embeddingDim, size_t LSTMDim, size_t cellDim, const DeviceDescriptor& device, const std::wstring& outputName)
 {
     auto embeddingFunction = Embedding(input, embeddingDim, device);
     auto pastValueRecurrenceHook = [](const Variable& x) { return PastValue(x); };
@@ -675,4 +744,4 @@ inline void CompareFunctions(const FunctionPtr& first, const FunctionPtr& second
     }
 }
 
-MinibatchSourcePtr CreateHTKMinibatchSource(size_t featureDim, size_t numOutputClasses, const Dictionary& readModeConfig, size_t epochSize, bool randomize = true);
+MinibatchSourceConfig GetHTKMinibatchSourceConfig(size_t featureDim, size_t numOutputClasses, size_t epochSize = MinibatchSource::InfinitelyRepeat, bool randomize = true);
